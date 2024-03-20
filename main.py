@@ -25,6 +25,7 @@ from torch_geometric import seed_everything
 from graphgps.finetuning import load_pretrained_model_cfg, \
     init_model_from_pretrained
 from graphgps.logger import create_logger
+from graphgps.neo4jdataLoader import convert_Neo4j2pyG
 
 
 def new_optimizer_config(cfg):
@@ -150,6 +151,11 @@ if __name__ == '__main__':
             loggers.extend(loggers_2)
             loggers.extend(loggers_3)
             loaders = loaders*3
+        if cfg.dataset.name == 'Neo4jHeteroGraph':
+            # Assume `database` is passed as an argument or defined globally
+            pyg_hetero_data = convert_database(cfg.dataset.database)
+            # Additional preprocessing steps if necessary
+
         model = create_model()
         if cfg.pretrained.dir:
             model = init_model_from_pretrained(
