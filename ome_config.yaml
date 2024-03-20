@@ -1,0 +1,41 @@
+task: 'graph_classification' # Task type
+model: 'Exphormer'           # Model to use
+dataset: 'CustomHeteroDataset' # Custom dataset class or identifier
+graph_pooling: 'mean'       # Pooling mechanism for graph-level representation
+
+model_config:
+  hidden_channels: 128     # Number of hidden channels in GNN layers
+  out_channels: 2          # For binary classification or adjust accordingly for multi-class
+  num_layers: 4            # Number of GNN layers
+  dropout: 0.5             # Dropout rate
+  edge_dim: 2              # Dimension of edge features (weights and relationship types)
+  use_edge_features: True  # Whether to use edge features
+
+optimizer:
+  type: 'Adam'             # Optimizer type
+  lr: 0.001                # Learning rate
+  weight_decay: 5e-4       # Weight decay for regularization
+
+training:
+  batch_size: 32           # Batch size for training
+  epochs: 200              # Number of epochs to train
+  early_stopping: 10       # Early stopping patience
+
+inference:
+  batch_size: 32           # Batch size for inference
+
+loss: 'CrossEntropyLoss'   # Loss function for classification
+
+metrics:
+  - 'accuracy'             # Main metric to monitor
+  - 'f1_score'             # Additional metrics
+
+data_loader_args:
+  shuffle: True            # Shuffle the dataset during training
+  num_workers: 4           # Number of workers for data loading
+
+wandb:
+  project: 'exphormer_custom_dataset' # Weights & Biases project name
+  entity: 'your_wandb_entity'        # Your W&B entity
+
+# Add any additional configurations specific to your dataset or training regime.
