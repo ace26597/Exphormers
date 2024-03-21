@@ -20,22 +20,6 @@ import pandas as pd
 from neo4j import GraphDatabase
 import urllib.parse
 import os,sys
-# foo = run_query_df("""MATCH (n) RETURN (n) LIMIT 5""")
-from neo4j import GraphDatabase
-import matplotlib.pyplot as plt
-import pandas as pd
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib.cm as mcm
-from neo4j import GraphDatabase
-from sklearn.linear_model import LogisticRegression
-import numpy as np
-
-import os
-import json
-import torch
-from torch_geometric.data import HeteroData
-from py2neo import Graph
 
 def get_aws_secret_pws(pw_to_find):
 
@@ -102,7 +86,36 @@ def run_query(query):
             return pd.DataFrame([r.values() for r in result], columns=result.keys())
 
 
+# foo = run_query_df("""MATCH (n) RETURN (n) LIMIT 5""")
+from neo4j import GraphDatabase
+import matplotlib.pyplot as plt
+import pandas as pd
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as mcm
+from neo4j import GraphDatabase
+from sklearn.linear_model import LogisticRegression
+import numpy as np
 
+
+# foo = run_query_df("""MATCH (n) RETURN (n) LIMIT 5""")
+from neo4j import GraphDatabase
+import matplotlib.pyplot as plt
+import pandas as pd
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as mcm
+from neo4j import GraphDatabase
+from sklearn.linear_model import LogisticRegression
+import numpy as np
+
+import pandas as pd
+from time import sleep
+import os
+import json
+import torch
+from torch_geometric.data import HeteroData
+from py2neo import Graph
 class Neo4jHeteroGraphStore:
     def __init__(self, uri, user, password, database, data_dir='data', use_file_storage=True):
         self.graph = Graph(uri, name=database, auth=(user, password))
@@ -154,22 +167,27 @@ class Neo4jHeteroGraphStore:
         # This could be a class attribute
         self.rel_type_mapping = {rel_type['relationshipType']: i for i, rel_type in enumerate(self.graph.run("CALL db.relationshipTypes()").data())}
 
-
         for rel_type in rel_types:
             type_ = rel_type["relationshipType"]
-            query = f"""
-                MATCH ()-[r:{type_}]->()
-                RETURN id(startNode(r)) AS source, id(endNode(r)) AS target, r.weight AS weight
-            """
-            results = self.graph.run(query).data()
-            print(rel_type,len(results))
-            edge_index = torch.tensor([(result['source'], result['target']) for result in results], dtype=torch.long).t().contiguous()
-            weights = torch.tensor([result['weight'] for result in results], dtype=torch.float)
-            # Assume rel_type_mapping is defined to map relationship types to integers
-            rel_type_idx = torch.full((edge_index.size(1),), self.rel_type_mapping[type_], dtype=torch.long)
-            edge_data[type_] = {'edge_index': edge_index, 'weights': weights, 'rel_type': rel_type_idx}
-            if self.use_file_storage:
-                    self._save_data(edge_data[type_], filename)
+            filename = f'rels_{type_}.json'
+            if self.use_file_storage and self._data_exists(filename):
+                edge_data[type_] = self._load_data(filename)
+            else:
+
+                query = f"""
+                    MATCH ()-[r:{type_}]->()
+                    RETURN id(startNode(r)) AS source, id(endNode(r)) AS target, r.weight AS weight
+                """
+                filename = f'rels_{type_}.json'
+                results = self.graph.run(query).data()
+                print(rel_type,len(results))
+                edge_index = torch.tensor([(result['source'], result['target']) for result in results], dtype=torch.long).t().contiguous()
+                weights = torch.tensor([result['weight'] for result in results], dtype=torch.float)
+                # Assume rel_type_mapping is defined to map relationship types to integers
+                rel_type_idx = torch.full((edge_index.size(1),), self.rel_type_mapping[type_], dtype=torch.long)
+                edge_data[type_] = {'edge_index': edge_index, 'weights': weights, 'rel_type': rel_type_idx}
+                if self.use_file_storage:
+                        self._save_data(edge_data[type_], filename)
         return edge_data
         
     def to_pyg_hetero_data(self):
@@ -187,15 +205,80 @@ class Neo4jHeteroGraphStore:
         
         return hetero_data
 
-def convert_Neo4j2pyG(database):
-    neo4j_store = Neo4jHeteroGraphStore(uri=host, user=user, password=password, database=database)
+import os
+import torch
+from torch_geometric.data import InMemoryDataset, Data
+
+class HeteroGraphInMemoryDataset(InMemoryDataset):
+    def __init__(self, root, hetero_data, transform=None, pre_transform=None):
+        self.hetero_data = hetero_data
+        super(HeteroGraphInMemoryDataset, self).__init__(root, transform, pre_transform)
+        self.data, self.slices = torch.load(self.processed_paths[0])
+
+    @property
+    def raw_file_names(self):
+        # No raw files, but we need to override this property
+        return []
+
+    @property
+    def processed_file_names(self):
+        # Assuming we'll store everything in a single file for simplicity
+        return ['hetero_data.pt']
+
+    def download(self):
+        # No download needed, data is already in memory
+        pass
+    
+    def process(self):
+        # Initialize empty dictionaries to hold node features and edge lists for all types
+        x_dict = {}
+        edge_index_dict = {}
+        edge_attr_dict = {}
+    
+        # Process node features
+        for node_type in self.hetero_data.node_types:
+            if 'x' in self.hetero_data[node_type].keys():
+                x_dict[node_type] = self.hetero_data[node_type].x
+    
+        # Process edges
+        for rel_type in self.hetero_data.edge_types:
+            edge_index = self.hetero_data[rel_type].edge_index
+            if edge_index.size(0) == 0:
+                continue  # Skip if no edges of this type
+            edge_index_dict[rel_type] = edge_index
+            # Assuming edge_attr exists and corresponds to edge weights
+            if 'edge_attr' in self.hetero_data[rel_type]:
+                edge_attr_dict[rel_type] = self.hetero_data[rel_type].edge_attr
+    
+        # Create a single Data object for the entire heterogeneous graph
+        data = Data(x_dict=x_dict, edge_index_dict=edge_index_dict, edge_attr_dict=edge_attr_dict)
+    
+        # If you have pre_transforms, apply them
+        if self.pre_transform is not None:
+            data = self.pre_transform(data)
+    
+        # Save the processed data
+        torch.save(self.collate([data]), self.processed_paths[0])
+
+    def len(self):
+        return len(self.processed_file_names)
+
+    def get(self, idx):
+        # Load a single graph
+        data = torch.load(self.processed_paths[idx])
+        return data
+        
+# Assuming `hetero_data` is your HeteroData object from Neo4j
+root_dir = 'Jupyterlab/Ankur_Notebooks/Exphormer/data'
+dataset = HeteroGraphInMemoryDataset(root=root_dir, hetero_data=data)
+
+def convert_database_to_hetero(database):
+    neo4j_store = Neo4jHeteroGraphStore(uri=host, user=user, password=password, database=database, use_file_storage=True)
     pyg_hetero_data = neo4j_store.to_pyg_hetero_data()
     print(pyg_hetero_data.metadata())
     return pyg_hetero_data
 
-    
-# # Access node names for a specific node type
-# print(pyg_hetero_data['Article'].name)
-
-# # Access relationship weights for a specific relationship type
-# print(pyg_hetero_data['SENT_TO'].edge_attr)
+if __name__=='__main__':
+    root_dir = '/root/Downloads/Jupyterlab/Ankur_Notebooks/Exphormer/data/'
+    data =convert_database_to_hetero('ome-alerts')
+    dataset = HeteroGraphInMemoryDataset(root=root_dir, hetero_data=data)
